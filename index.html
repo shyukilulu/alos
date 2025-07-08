@@ -221,9 +221,34 @@
             transform: translateX(100%);
         }
 
+        /* Main content */
+        .main-title {
+            text-align: center;
+            margin-top: 8rem;
+            margin-bottom: 1rem;
+        }
+
+        .main-title h1 {
+            font-size: 4rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.05em;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.25rem;
+            font-weight: 400;
+            letter-spacing: -0.03em;
+        }
+
         .search-container {
             max-width: 700px;
-            margin: 8rem auto 3rem;
+            margin: 3rem auto;
             animation: fadeInUp 0.8s ease-out;
         }
 
@@ -675,8 +700,12 @@
                 font-size: 0.75rem;
             }
 
+            .main-title h1 {
+                font-size: 3rem;
+            }
+
             .search-container {
-                margin-top: 6rem;
+                margin-top: 2rem;
             }
 
             .search-input {
@@ -729,10 +758,10 @@
     <div class="particles" id="particles"></div>
 
     <div class="container">
-        <header>
+        <div class="main-title">
             <h1>ALOS</h1>
             <p class="subtitle">Solana Searcher</p>
-        </header>
+        </div>
 
         <div class="search-container">
             <div class="search-wrapper">
@@ -757,20 +786,6 @@
             <div class="recent-tags" id="recentTags"></div>
         </div>
     </div>
-
-    <button class="theme-toggle" id="themeToggle" title="Toggle theme">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="5"></circle>
-            <line x1="12" y1="1" x2="12" y2="3"></line>
-            <line x1="12" y1="21" x2="12" y2="23"></line>
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-            <line x1="1" y1="12" x2="3" y2="12"></line>
-            <line x1="21" y1="12" x2="23" y2="12"></line>
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-        </svg>
-    </button>
 
     <div class="network-status">
         <span class="status-dot"></span>
@@ -840,18 +855,6 @@
             const toast = document.createElement('div');
             toast.className = 'toast';
             toast.textContent = message;
-            toast.style.cssText = `
-                position: fixed;
-                bottom: 4rem;
-                left: 50%;
-                transform: translateX(-50%);
-                background: var(--bg-card);
-                border: 1px solid var(--border);
-                padding: 1rem 2rem;
-                border-radius: 8px;
-                z-index: 1000;
-                animation: fadeInUp 0.3s ease-out;
-            `;
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 3000);
         };
@@ -878,18 +881,24 @@
             return memeTokenSuffixes.some(suffix => lowerAddress.endsWith(suffix));
         };
 
-        // API functions
+        // API functions - Updated for Jupiter API v2
         const fetchTokenInfo = async (contractAddress) => {
             const cacheKey = `token_${contractAddress}`;
             const cached = cache.get(cacheKey);
             if (cached) return cached;
 
             try {
-                const response = await fetch(`https://api.jup.ag/tokens/v1/${contractAddress}`);
+                // Use Jupiter Price API v2 for token info
+                const response = await fetch(`https://api.jup.ag/price/v2?ids=${contractAddress}`);
                 if (!response.ok) throw new Error('Failed to fetch token info');
                 const data = await response.json();
-                cache.set(cacheKey, data);
-                return data;
+                
+                if (data.data && data.data[contractAddress]) {
+                    const tokenData = data.data[contractAddress];
+                    cache.set(cacheKey, tokenData);
+                    return tokenData;
+                }
+                throw new Error('Token not found');
             } catch (error) {
                 console.error('Error fetching token info:', error);
                 throw error;
@@ -902,12 +911,38 @@
             if (cached) return cached;
 
             try {
-                const response = await fetch(`https://api.jup.ag/tokens/search?query=${ticker}`);
-                if (!response.ok) throw new Error('Failed to search tokens');
-                const data = await response.json();
-                const results = data.slice(0, 3);
-                cache.set(cacheKey, results);
-                return results;
+                // First, get the list of all tokens
+                const response = await fetch('https://tokens.jup.ag/tokens?tags=verified');
+                if (!response.ok) throw new Error('Failed to fetch tokens');
+                
+                const allTokens = await response.json();
+                
+                // Filter tokens by ticker (case-insensitive)
+                const matchingTokens = allTokens.filter(token => 
+                    token.symbol.toLowerCase() === ticker.toLowerCase()
+                );
+                
+                // Get detailed info for matching tokens
+                if (matchingTokens.length > 0) {
+                    const tokenAddresses = matchingTokens.slice(0, 5).map(t => t.address).join(',');
+                    const priceResponse = await fetch(`https://api.jup.ag/price/v2?ids=${tokenAddresses}`);
+                    
+                    if (priceResponse.ok) {
+                        const priceData = await priceResponse.json();
+                        
+                        // Combine token info with price data
+                        const results = matchingTokens.slice(0, 5).map(token => ({
+                            ...token,
+                            price: priceData.data[token.address]?.price || null,
+                            marketCap: priceData.data[token.address]?.marketCap || null
+                        }));
+                        
+                        cache.set(cacheKey, results);
+                        return results;
+                    }
+                }
+                
+                return [];
             } catch (error) {
                 console.error('Error searching tokens:', error);
                 throw error;
@@ -1035,32 +1070,32 @@
         };
 
         const renderTokenInfo = (tokenData, address) => {
+            const price = tokenData.price || 0;
+            const marketCap = tokenData.marketCap || 0;
+            
             return `
                 <div class="card">
                     <div class="token-info">
                         <div class="token-icon">
-                            ${tokenData.logoURI ? 
-                                `<img src="${tokenData.logoURI}" alt="${tokenData.symbol}" onerror="this.style.display='none'">` : 
-                                `<span style="font-size: 1.5rem;">${tokenData.symbol.charAt(0)}</span>`
-                            }
+                            <span style="font-size: 1.5rem;">💎</span>
                         </div>
                         <div class="token-details">
-                            <h3>${tokenData.name}</h3>
-                            <span class="token-symbol">${tokenData.symbol}</span>
+                            <h3>Token Contract</h3>
+                            <span class="token-symbol">${address.substring(0, 8)}...${address.substring(address.length - 6)}</span>
                         </div>
                     </div>
                     <div class="token-stats">
                         <div class="stat">
                             <div class="stat-label">Price USD</div>
-                            <div class="stat-value">$${tokenData.price || 'N/A'}</div>
+                            <div class="stat-value">$${price.toFixed(6)}</div>
                         </div>
                         <div class="stat">
-                            <div class="stat-label">1H Volume</div>
-                            <div class="stat-value">${tokenData.volume ? '$' + formatNumber(tokenData.volume) : 'N/A'}</div>
+                            <div class="stat-label">Market Cap</div>
+                            <div class="stat-value">${marketCap > 0 ? '$' + formatNumber(marketCap) : 'N/A'}</div>
                         </div>
                         <div class="stat">
-                            <div class="stat-label">Holders</div>
-                            <div class="stat-value">${tokenData.holders || 'N/A'}</div>
+                            <div class="stat-label">Type</div>
+                            <div class="stat-value">SPL Token</div>
                         </div>
                     </div>
                     <a href="https://solscan.io/token/${address}" target="_blank" class="btn" style="width: 100%; margin-top: 1rem;">
@@ -1071,6 +1106,10 @@
         };
 
         const renderTickerResults = (tokens) => {
+            if (tokens.length === 0) {
+                return renderError('No tokens found for this ticker');
+            }
+
             return tokens.map(token => `
                 <div class="card">
                     <div class="token-info">
@@ -1088,7 +1127,7 @@
                     <div class="token-stats">
                         <div class="stat">
                             <div class="stat-label">Price</div>
-                            <div class="stat-value">$${token.price || 'N/A'}</div>
+                            <div class="stat-value">$${token.price ? token.price.toFixed(6) : 'N/A'}</div>
                         </div>
                         <div class="stat">
                             <div class="stat-label">Market Cap</div>
@@ -1148,11 +1187,9 @@
                         
                     case 'ticker':
                         const tokens = await searchTokensByTicker(value);
-                        if (tokens && tokens.length > 0) {
-                            resultsContainer.innerHTML = renderTickerResults(tokens);
+                        resultsContainer.innerHTML = renderTickerResults(tokens);
+                        if (tokens.length > 0) {
                             addRecentSearch(value);
-                        } else {
-                            resultsContainer.innerHTML = renderError('No tokens found for this ticker');
                         }
                         break;
                         
@@ -1160,6 +1197,7 @@
                         resultsContainer.innerHTML = renderError('Invalid search format. Please enter a valid Solana address, token ticker, or Twitter username.');
                 }
             } catch (error) {
+                console.error('Search error:', error);
                 resultsContainer.innerHTML = renderError('An error occurred while searching. Please try again.');
             }
         };
@@ -1237,6 +1275,11 @@
             
             // Make copyToClipboard available globally
             window.copyToClipboard = copyToClipboard;
+        });
+
+        // Connect wallet handler
+        document.getElementById('connectWallet').addEventListener('click', () => {
+            showToast('Wallet connection feature coming soon!');
         });
     </script>
 </body>
